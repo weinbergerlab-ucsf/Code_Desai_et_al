@@ -1,0 +1,191 @@
+---
+title: "Desai_et_al_2021_scRNAseq_analysis"
+output: html_document
+---
+
+```{r}
+
+library(stringr)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(ggsci)
+library(BASiCS)
+library(Seurat)
+library(Matrix)
+library(SingleCellExperiment)
+library(ComplexHeatmap)
+library(dplyr)
+library(magrittr)
+library(seriation)
+library(ggrepel)
+library(ggbeeswarm)
+library(destiny)
+library(ggthemes)
+library(viridis)
+library(circlize)
+library(seriation)
+library(ComplexHeatmap)
+
+theme_pubr_new = function(){
+  theme_pubr(base_family = "Helvetica", base_size = 14, legend = "right") %+replace%
+    theme(
+      axis.title = element_text(face = "bold", size = 18), 
+      legend.text = element_text(face = "bold", size = 12),
+      axis.text = element_text(size = 16)
+    )
+}
+
+```
+
+```{r}
+### Analysis for Figures 1C-F starting from the raw UMI counts from 10x Cell Ranger output (DMSO_IdU_scRNA_counts.csv)
+### Using the normalization method from Seurat
+
+dmso_idu_cell_gene_matrix = read.csv(file = "DMSO_IdU_scRNA_counts.csv", row.names = 1)
+
+seurat_scal_dmso_idu = matrix(data = NA, nrow = 27998, ncol = 1556)
+
+for (i in 1:1556){
+  seurat_scal_dmso_idu[,i] = log((((dmso_idu_cell_gene_matrix[,i])/sum(dmso_idu_cell_gene_matrix[,i]))*10000) +1)
+}
+
+
+colnames(seurat_scal_dmso_idu) = colnames(dmso_idu_cell_gene_matrix)
+rownames(seurat_scal_dmso_idu) = rownames(dmso_idu_cell_gene_matrix)
+
+dmso_idu_filter = rowMeans(seurat_scal_dmso_idu) > .1
+
+### Fano correction factor 
+dmso_corr = (1/(10000/(sum(colSums(seurat_scal_dmso_idu[dmso_idu_filter,1:812]))/812)))*(10*exp(1))
+idu_corr = (1/(10000/(sum(colSums(seurat_scal_dmso_idu[dmso_idu_filter,813:1556]))/744)))*(10*exp(1))
+
+seurat_dmso_mean_var = data.frame(dmso_mean = rowMeans(seurat_scal_dmso_idu[dmso_idu_filter,1:812]), dmso_var = (rowSds(seurat_scal_dmso_idu[dmso_idu_filter,1:812]))^2, dmso_cv = ((rowSds(seurat_scal_dmso_idu[dmso_idu_filter,1:812]))^2)/((rowMeans(seurat_scal_dmso_idu[dmso_idu_filter,1:812]))^2), dmso_fano = (((rowSds(seurat_scal_dmso_idu[dmso_idu_filter,1:812]))^2)/(rowMeans(seurat_scal_dmso_idu[dmso_idu_filter,1:812])))*dmso_corr)
+
+seurat_idu_mean_var = data.frame(idu_mean = rowMeans(seurat_scal_dmso_idu[dmso_idu_filter,813:1556]), idu_var = (rowSds(seurat_scal_dmso_idu[dmso_idu_filter,813:1556]))^2, idu_cv = ((rowSds(seurat_scal_dmso_idu[dmso_idu_filter,813:1556]))^2)/((rowMeans(seurat_scal_dmso_idu[dmso_idu_filter,813:1556]))^2), idu_fano = (((rowSds(seurat_scal_dmso_idu[dmso_idu_filter,813:1556]))^2)/(rowMeans(seurat_scal_dmso_idu[dmso_idu_filter,813:1556])))*idu_corr)
+```
+
+```{r}
+### Plotting Figure 1C, Mean vs. CV2
+
+ggplot() + geom_point(data = seurat_dmso_mean_var, aes(x = dmso_mean, y = dmso_cv), color = "black", size = 0.05, alpha = 0.5) + geom_point(data = seurat_idu_mean_var, aes(x = idu_mean, y = idu_cv), color = "red", size = 0.05, alpha = 0.5) + scale_x_continuous(limits = c(0.1,2), trans = "log10", breaks = c(0.1,0.3,1.0, 2.0)) + xlab(bquote("Normalized Mean")) + scale_y_continuous( limits = c(0.01,4), trans = "log10", breaks = c(0.01,0.1,1,4))+ ylab(bquote(CV^2)) + theme_pubr_new()
+
+```
+
+
+```{r}
+### Plotting Figure 1D, Mean vs Variance
+
+ggplot() + geom_point(data = seurat_dmso_mean_var, aes(x = dmso_mean, y = dmso_var), color = "black", size = 0.05, alpha = 0.5) + geom_point(data = seurat_idu_mean_var, aes(x = idu_mean, y = idu_var), color = "red", size = 0.05, alpha = 0.5) + scale_x_continuous(limits = c(0.07,2), trans = "log10", breaks = c(0.07,0.2,0.6,2.0), expand = c(0.01,0)) + xlab(bquote("Normalized Mean")) + scale_y_continuous(limits = c(0.01,0.3), trans = "log10", breaks = c(0.01,0.03,0.05,0.1,0.15, 0.3), expand = c(0,0) )+ ylab(bquote("Variance")) + theme_pubr_new() 
+
+```
+
+```{r}
+### Plotting Figure 1E, Mean in DMSO vs Mean in IdU 
+
+seurat_scal_mean_dmso_idu = data.frame(dmso = seurat_dmso_mean_var$dmso_mean, idu = seurat_idu_mean_var$idu_mean)
+
+rownames(seurat_scal_mean_dmso_idu) = rownames(seurat_dmso_mean_var)
+
+ggplot(data = seurat_scal_mean_dmso_idu, aes(x = dmso, y = idu), color = "black") + geom_point(alpha = 1/7)+ stat_density2d(aes(alpha=..level.., fill=..level..), size=2, bins=10, geom="polygon", show.legend = FALSE) + scale_colour_gradient(low = "blue", high = "red", guide = FALSE) + scale_fill_gradient(low = "blue", high = "red") + scale_alpha(range = c(0.00, 0.2), guide = FALSE) + geom_density2d(aes(colour=..level..) ,bins=10, size = 0.5, show.legend = FALSE)  + geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2, size = 1.5)  + xlab(bquote("DMSO Mean")) + ylab(bquote("IdU Mean")) + theme_pubr_new() + scale_x_continuous(limits = c(0.07,3.5), trans = "log10", breaks = c(0.1,0.3,1.0,3.5))  + scale_y_continuous( limits = c(0.07,3.5), trans = "log10", breaks = c(0.1,0.3,1.0,3.5))
+
+```
+
+```{r}
+### Plotting Figure 1F, Fano in DMSO vs Fano in IdU 
+seurat_scal_fano_dmso_idu = data.frame(dmso = seurat_dmso_mean_var$dmso_fano, idu = seurat_idu_mean_var$idu_fano)
+
+seurat_scal_fano_dmso_idu$genes = rownames(seurat_dmso_mean_var)
+
+
+ggplot(data = seurat_scal_fano_dmso_idu, aes(x = dmso, y = idu), color = "black") + geom_point(alpha = 1/7)+ stat_density2d(aes(alpha=..level.., fill=..level..), size=2, bins=10, geom="polygon", show.legend = FALSE) + scale_colour_gradient(low = "blue", high = "red", guide = FALSE) + scale_fill_gradient(low = "blue", high = "red") + scale_alpha(range = c(0.00, 0.2), guide = FALSE) + geom_density2d(aes(colour=..level..) ,bins=10, size = 0.5, show.legend = FALSE)  + geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2, size = 1.5) + xlim(0,4) + xlab("DMSO Fano Factor") + ylim(0,4)+ ylab("Idu Fano Factor") + theme_pubr_new() 
+
+```
+
+```{r}
+dmso_idu_mat=as.matrix(dmso_idu_cell_gene_matrix[,1:1556])
+
+tech = c(rep(FALSE, 27998))
+
+dmso_idu_filter=BASiCS_Filter(dmso_idu_mat, Tech = tech)
+
+tech2 = c(rep(FALSE, 4971))
+
+dmso_basics_data = newBASiCS_Data(dmso_idu_filter$Counts[,1:812],Tech = tech2, BatchInfo = rep(c(1,2), c(406,406)))
+
+idu_basics_data = newBASiCS_Data(dmso_idu_filter$Counts[,813:1556],Tech = tech2, BatchInfo = rep(c(1,2), c(372,372)))
+
+dmso_basics_results = BASiCS_MCMC(dmso_basics_data, N = 4000, Thin = 10, Burn = 2000, WithSpikes = FALSE, Regression = FALSE, PrintProgress = TRUE, PriorDelta = 'log-normal')
+
+idu_basics_results = BASiCS_MCMC(idu_basics_data, N = 4000, Thin = 10, Burn = 2000, WithSpikes = FALSE, Regression = FALSE, PrintProgress = TRUE)
+
+dmso_idu_de_test = BASiCS_TestDE(Chain1 = idu_basics_results, Chain2 = dmso_basics_results, GroupLabel1 = "idu", GroupLabel2 = "DMSO", EpsilonM = log2(2), EpsilonD = log2(1.5), EpsilonR = 0.41, ProbThresholdM = 0.85, Plot = TRUE)
+```
+
+```{r}
+### Plotting Figure 1G, volcano plot of fold change in mean vs posterior probability 
+
+dmso_idu_basics_mean = dmso_idu_de_test$TableMean
+
+### adding small random noise to the probdiffmean variable since all values are very close to 0
+
+rand_noise = runif(nrow(dmso_idu_basics_mean), 0, 0.01)
+
+dmso_idu_basics_mean$ProbDiffMean = dmso_idu_basics_mean$ProbDiffMean + rand_noise
+
+
+ggplot(data = subset(dmso_idu_basics_mean, ResultDiffMean %in% c("idu+", "DMSO+", "NoDiff")), mapping = aes(x = MeanLog2FC, y = ProbDiffMean, color = ResultDiffMean))+ scale_color_manual(values = c("blue", "red", "grey"))  + geom_point(size = 0.5)+ geom_vline(xintercept = 0, linetype = 1, size = 1) + geom_hline(yintercept = 0.85, linetype = 2) + theme_pubr_new() + xlab(bquote(Log[2]*"(Fold Change in"~mu*")")) + ylab("Posterior Probability") + scale_y_continuous(limits = c(0,1.02), expand = c(0,0)) + rremove("legend") + scale_x_continuous(limits = c(-3, 3), breaks = c(-3, -1.5, 0, 1.5, 3), expand = c(0,0))
+
+```
+
+```{r}
+### Plotting Figure 1F, volcano plot of fold change in dispersion vs posterior probability 
+
+dmso_idu_basics_var = dmso_idu_de_test$TableDisp
+
+ggplot(data = subset(dmso_idu_basics_var, ResultDiffDisp %in% c("idu+", "DMSO+", "NoDiff")), mapping = aes(x = DispLog2FC, y = ProbDiffDisp, color = ResultDiffDisp))+ scale_color_manual(values = c("blue", "red", "grey")) + geom_point(size = 0.5) + geom_vline(xintercept = 0, linetype = 1, size = 1) + geom_hline(yintercept = 0.85, linetype = 2) + theme_pubr_new() + xlab(bquote(Log[2]*"(Fold Change in Over-DispersionM)")) + ylab("Posterior Probability") + scale_y_continuous(limits = c(0,1), expand = expand_scale(mult = c(0,0.01))) + rremove("legend") + scale_x_continuous(limits = c(-3, 3), breaks = c(-3, -1.5, 0, 1.5, 3), expand = c(0,0))
+
+```
+
+```{r}
+### Analysis for Figure 2A, gene-gene correlation matrices 
+
+dmso_idu_heatmap_filter = rowMeans(seurat_scal_dmso_idu) > 1
+
+rotated_seurat_scale_dmso = data.frame(t(seurat_scal_dmso_idu[dmso_idu_heatmap_filter, 1:812]))
+
+rotated_seurat_scale_idu = data.frame(t(seurat_scal_dmso_idu[dmso_idu_heatmap_filter, 813:1556]))
+
+dmso_cor = cor(rotated_seurat_scale_dmso)
+
+idu_cor = cor(rotated_seurat_scale_idu)
+
+### using seriation package to cluster genes into modules based on shared gene expression, this requires the euclidean distances of genes based on correlation values
+
+dmso_dist_cor = dist(dmso_cor)
+
+dmso_seriate = seriate(dmso_dist_cor, method = "HC")
+
+```
+
+```{r}
+### Plotting left-hand panel of Figure 2A
+col_fun_2 = colorRamp2(seq(-.3,.3,length = 5), c("navy", "blue", "white","yellow", "red"))
+
+dmso_heatmap = Heatmap(dmso_cor, name = "Correlation", col = col_fun_2, row_order = get_order(dmso_seriate,1), column_order = get_order(dmso_seriate,1), show_row_names = FALSE, show_column_names = FALSE, border = TRUE)
+
+dmso_heatmap
+```
+
+
+```{r}
+### Plotting right-hand panel of Figure 2A
+idox_heatmap = Heatmap(idox_cor, name = "Correlation", col = col_fun_2, row_order = get_order(dmso_seriate,1), column_order = get_order(dmso_seriate,1), 
+    show_row_names = FALSE, show_column_names = FALSE, border = TRUE
+    )
+
+idox_heatmap
+```
+
+
+
